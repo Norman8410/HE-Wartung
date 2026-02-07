@@ -19,33 +19,34 @@
         .card-type { font-size: 9px; font-weight: bold; color: #777; margin-bottom: 3px; }
         .card-id { font-size: 16px; font-weight: bold; color: var(--bosch-blue); }
         .card-rest { font-size: 14px; font-weight: bold; float: right; }
-        .crit { border-left-color: var(--bosch-dark-red); background: #fff5f5; }
+        .crit { border-left-color: var(--bosch-dark-red); background: #fff5f5; animation: blink 2s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
         .urg { border-left-color: var(--bosch-red); }
         .warn { border-left-color: var(--bosch-orange); }
-        .nav-a { text-decoration: none; color: var(--bosch-blue); font-size: 12px; font-weight: bold; margin-left: 15px; }
+        .nav-a { text-decoration: none; color: var(--bosch-blue); font-size: 12px; font-weight: bold; margin-left: 15px; border: 1px solid #ccc; padding: 4px 8px; border-radius: 3px; }
     </style>
 </head>
 <body>
     <div class="top-bar">Globales Wartungs-Cockpit</div>
     <div class="header">
-        <div><span class="bosch-text">BOSCH</span> <small>Wartung Übersicht</small></div>
+        <div><span class="bosch-text">BOSCH</span> <small>Zentral-Monitor</small></div>
         <div>
-            <a class="nav-a" href="index.html">⚙️ HE</a>
-            <a class="nav-a" href="https://norman8410.github.io/unotron-wartung/">🧪 Unotron</a>
             <a class="nav-a" href="https://norman8410.github.io/agie-wartung/">⚡ Agie</a>
+            <a class="nav-a" href="https://norman8410.github.io/unotron-wartung/">🧪 Unotron</a>
+            <a class="nav-a" href="index.html">⚙️ HE</a>
         </div>
     </div>
     <div class="grid">
         <div class="col" style="border-top-color: var(--bosch-dark-red)">
-            <div class="col-header" style="color: var(--bosch-dark-red)">Überfällig <span id="c1">0</span></div>
+            <div class="col-header" style="color: var(--bosch-dark-red)">ÜBERFÄLLIG <span id="c1">0</span></div>
             <div id="l1" class="col-content"></div>
         </div>
         <div class="col" style="border-top-color: var(--bosch-red)">
-            <div class="col-header" style="color: var(--bosch-red)">Kritisch (< 3%) <span id="c2">0</span></div>
+            <div class="col-header" style="color: var(--bosch-red)">KRITISCH <span id="c2">0</span></div>
             <div id="l2" class="col-content"></div>
         </div>
         <div class="col" style="border-top-color: var(--bosch-orange)">
-            <div class="col-header" style="color: var(--bosch-orange)">Warnung (< 12%) <span id="c3">0</span></div>
+            <div class="col-header" style="color: var(--bosch-orange)">WARNUNG <span id="c3">0</span></div>
             <div id="l3" class="col-content"></div>
         </div>
     </div>
@@ -62,42 +63,55 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        const HE_INT = 156000, AGIE_INT = 156000;
+
+        const AGIE_INT = 156000;
+        const HE_INT = 156000;
         const UNO_STEPS = [2000, 4000, 10000, 14000, 18000, 26000, 28000, 30000, 34000, 42000, 50000, 56000, 58000, 66000, 74000, 82000, 90000, 98000, 104000];
 
-        function loadAll() {
-            let list = [];
-            
-            // Unotron
-            db.ref('maintenanceStateUnotron').once('value', s => {
-                const d = s.val() || {};
-                (d.cloudRawData || []).forEach(m => {
-                    const id = m.STATIONNO, ist = parseInt(m['COUNT(*)']) || 0, c = (d.extraCycles || {})[id] || 0;
-                    const prev = c > 0 ? UNO_STEPS[c-1] : 0, target = UNO_STEPS[c] || 104000;
-                    addToList(list, '🧪 Unotron', id, target - ist, ((target-ist)/(target-prev))*100);
-                });
-                
-                // HE
-                db.ref('maintenanceStateHE').once('value', s => {
-                    const d = s.val() || {};
-                    (d.cloudRawData || []).forEach(m => {
-                        const id = m.StationNo, ist = (parseInt(m.Parts) || 0) + ((d.manualOffsets || {})[id] || 0), c = (d.extraCycles || {})[id] || 0;
-                        const target = (c + 1) * HE_INT;
-                        addToList(list, '⚙️ HE', id, target - ist, ((target - ist) / HE_INT) * 100);
-                    });
+        async function loadData() {
+            let combinedList = [];
 
-                    // Agie
-                    db.ref('maintenanceState').once('value', s => {
-                        const d = s.val() || {};
-                        (d.cloudRawData || []).forEach(m => {
-                            const id = m.StationNo, ist = (parseInt(m.Parts) || 0) + ((d.manualOffsets || {})[id] || 0), c = (d.extraCycles || {})[id] || 0;
-                            const target = (c + 1) * AGIE_INT;
-                            addToList(list, '⚡ Agie', id, target - ist, ((target - ist) / AGIE_INT) * 100);
-                        });
-                        render(list);
-                    });
+            // 1. AGIE DATEN (Pfad: maintenanceState)
+            const snapAgie = await db.ref('maintenanceState').once('value');
+            const dAgie = snapAgie.val() || {};
+            if(dAgie.cloudRawData) {
+                dAgie.cloudRawData.forEach(m => {
+                    const id = m.StationNo || m.STATIONNO;
+                    const ist = (parseInt(m.Parts || m.PARTS) || 0) + ((dAgie.manualOffsets || {})[id] || 0);
+                    const cycles = (dAgie.extraCycles || {})[id] || 0;
+                    const target = (cycles + 1) * AGIE_INT;
+                    addToList(combinedList, '⚡ Agie', id, target - ist, ((target - ist) / AGIE_INT) * 100);
                 });
-            });
+            }
+
+            // 2. HE DATEN (Pfad: maintenanceStateHE)
+            const snapHE = await db.ref('maintenanceStateHE').once('value');
+            const dHE = snapHE.val() || {};
+            if(dHE.cloudRawData) {
+                dHE.cloudRawData.forEach(m => {
+                    const id = m.StationNo || m.STATIONNO;
+                    const ist = (parseInt(m.Parts || m.PARTS) || 0) + ((dHE.manualOffsets || {})[id] || 0);
+                    const cycles = (dHE.extraCycles || {})[id] || 0;
+                    const target = (cycles + 1) * HE_INT;
+                    addToList(combinedList, '⚙️ HE', id, target - ist, ((target - ist) / HE_INT) * 100);
+                });
+            }
+
+            // 3. UNOTRON DATEN (Pfad: maintenanceStateUnotron)
+            const snapUno = await db.ref('maintenanceStateUnotron').once('value');
+            const dUno = snapUno.val() || {};
+            if(dUno.cloudRawData) {
+                dUno.cloudRawData.forEach(m => {
+                    const id = m.STATIONNO || m.StationNo;
+                    const ist = parseInt(m['COUNT(*)'] || m.Parts) || 0;
+                    const cycles = (dUno.extraCycles || {})[id] || 0;
+                    const prev = cycles > 0 ? UNO_STEPS[cycles-1] : 0;
+                    const target = UNO_STEPS[cycles] || 104000;
+                    addToList(combinedList, '🧪 Unotron', id, target - ist, ((target - ist) / (target - prev)) * 100);
+                });
+            }
+
+            renderGrid(combinedList);
         }
 
         function addToList(list, type, id, rest, perc) {
@@ -105,22 +119,31 @@
             if (rest <= 0) status = 'crit';
             else if (perc <= 3.125) status = 'urg';
             else if (perc <= 12.5) status = 'warn';
+            
             if (status) list.push({ type, id, rest, status });
         }
 
-        function render(list) {
-            let html = { crit: '', urg: '', warn: '' }, count = { crit: 0, urg: 0, warn: 0 };
+        function renderGrid(list) {
+            let html = { crit: '', urg: '', warn: '' };
+            let count = { crit: 0, urg: 0, warn: 0 };
+
             list.sort((a,b) => a.rest - b.rest).forEach(m => {
                 count[m.status]++;
-                html[m.status] += `<div class="card ${m.status}"><div class="card-rest">${m.rest.toLocaleString()}</div><div class="card-type">${m.type}</div><div class="card-id">${m.id}</div></div>`;
+                html[m.status] += `
+                    <div class="card ${m.status}">
+                        <div class="card-rest">${m.rest.toLocaleString()}</div>
+                        <div class="card-type">${m.type}</div>
+                        <div class="card-id">Maschine ${m.id}</div>
+                    </div>`;
             });
-            for(let key in html) {
-                document.getElementById('l' + (key=='crit'?'1':key=='urg'?'2':'3')).innerHTML = html[key];
-                document.getElementById('c' + (key=='crit'?'1':key=='urg'?'2':'3')).innerText = count[key];
-            }
+
+            document.getElementById('l1').innerHTML = html.crit; document.getElementById('c1').innerText = count.crit;
+            document.getElementById('l2').innerHTML = html.urg;  document.getElementById('c2').innerText = count.urg;
+            document.getElementById('l3').innerHTML = html.warn; document.getElementById('c3').innerText = count.warn;
         }
-        loadAll();
-        setInterval(loadAll, 60000);
+
+        loadData();
+        setInterval(loadData, 30000); // Auto-Refresh alle 30 Sek.
     </script>
 </body>
 </html>
